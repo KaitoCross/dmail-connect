@@ -39,9 +39,7 @@ void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mai
         socklen_t l = sizeof(client);
         socklen_t m = sizeof(serv);
         char buffer[10] = "";
-        //char buffer2[5]="0000";
         bind(*sockfd, (struct sockaddr*)&serv, sizeof(serv));
-        //int sent = sendto(sockfd,buffer,5,0,(struct sockaddr *)&serv,m);
         char *ptr;
         while(*endMyLife == false){
             recvfrom(*sockfd,buffer,10,0,(struct sockaddr *)&client,&l);
@@ -71,37 +69,10 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
             bool killProgram=false;
             int errorcode=1337;
             int timeouts = 0;
-/*            struct sockaddr_in server;
-            *tcpsockfd = socket(AF_INET, SOCK_STREAM, 0);
-            if (*tcpsockfd<0)
-            {
-                cout << "CANT CREATE SOCKET!\n";
-            }
-            int addrlen = sizeof(server);*/
             /**bool conndead = false;*/
             char buffer[10]="";
-/*            server.sin_family = AF_INET;
-            server.sin_addr.s_addr = INADDR_ANY;
-            server.sin_port = htons(4242);
-            cout << "ABOUT TO BIND TCP\n";
-            int bindsuc = bind(*tcpsockfd, (struct sockaddr *)&server, addrlen);
-            if (bindsuc<0)
-            {
-                cout << "ERROR BINDING " << bindsuc <<"\n";
-            } else {
-                cout << "BOUND TCP\n";
-            }
-            int listensuc = listen(*tcpsockfd,1);
-            if (listensuc)
-            {
-                cout << "ERROR LISTENING " << listensuc <<"\n";
-            } else {
-                cout << "LISTENING TCP\n";
-            }*/
-            do {/*
-                int new_socket = accept(*tcpsockfd, (struct sockaddr *) &server, (socklen_t *) &addrlen);
-                cout << "CONNECTION ESTABLISHED!\n";
-                conndead=false;*/
+
+            do {
                 connDeadMutex->lock();
                 connDeadtemp=*conndead;
                 killProgram=*endMyLife;
@@ -147,26 +118,6 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
                         }
                         t2=timerexact::now();
                     }
-
-/*                    int valread = (int) read(*new_socket, buffer, 10);
-                    if (valread==0)
-                    {
-                        *conndead=true;
-                        cout << "CONNECTION LOST 0 PACKET\n";
-                    }
-                    if (strncmp(buffer, "RCVTO", 5) == 0) {
-                        char *endOfBuffer = &buffer[10];
-                        mTimeshift->lock();
-                        *timeshift = (int) strtol(buffer + 6, &endOfBuffer,10);
-                        cout << "RECEIVED NEW TIME\n";
-                        mTimeshift->unlock();
-                        send(*new_socket, "RCVOK", strlen("RCVOK"), 0);
-                    }
-                    if (strncmp(buffer, "SHTDW", 5) == 0) {
-                        char *endOfBuffer = &buffer[10];
-                        send(*new_socket, "SDOWN", strlen("SDOWN"), 0);
-                    }*/
-                    //cout << "WROTE PACKET\n";
                     connDeadtemp=*conndead;
                     killProgram=*endMyLife;
                     connDeadMutex->unlock();
@@ -179,7 +130,6 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
 
         void stopdaemon(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, thread* firstThread, thread* secondThread, thread* thirdThread)
         {
-            //terminate();
             shutdown(*connfd,SHUT_RDWR);
             for (int i = 0; i < sockfdamount; i++) {
                 shutdown(sockfd[i],SHUT_RDWR);
@@ -231,7 +181,6 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
                             whaterror = errno;
                             cout << "RCVOK ERRNO " << whaterror << "\n";
                         }
-                        //*endMyLife=true;
                     }
                     if (strncmp(buffer, "SHTDW", 5) == 0) {
                         send(*new_socket, "SDOWN", strlen("SDOWN"), 0);
