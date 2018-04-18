@@ -47,7 +47,7 @@ void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mai
                 mTimeshift->lock();
                 sprintf(buffer, "RCVTO %04d", *timeshift);
                 mTimeshift->unlock();
-                int sent = sendto(*sockfd, buffer, 10, 0, (struct sockaddr *) &client, m);
+                int sent = (int)sendto(*sockfd, buffer, 10, 0, (struct sockaddr *) &client, m);
             }
             if (strncmp(buffer, "MAILD", 5) == 0) {
                 cout << "MAIL PROCESSED\n";
@@ -176,7 +176,7 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
                         cout << "RECEIVED NEW TIME\n";
                         mTimeshift->unlock();
                         sprintf(buffer2,"RCVOK");
-                        int rcvok = send(*new_socket, buffer2, strlen(buffer2), 0);
+                        int rcvok = (int)send(*new_socket, buffer2, strlen(buffer2), 0);
                         if (rcvok==-1)
                         {
                             connDeadMutex->lock();
@@ -244,7 +244,7 @@ int main() {
     server.sin_addr.s_addr = INADDR_ANY;
     server.sin_port = htons(4242);
     cout << "ABOUT TO BIND TCP\n";
-    int bindsuc = bind(socketfd[1], (struct sockaddr *)&server, addrlen);
+    int bindsuc = (int)bind(socketfd[1], (struct sockaddr *)&server, addrlen);
     if (bindsuc<0)
     {
         cout << "ERROR BINDING " << bindsuc <<"\n";
