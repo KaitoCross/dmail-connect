@@ -22,8 +22,6 @@
 #include <chrono>
 #include <err.h>
 #include <errno.h>
-//#include <libexplain/socket.h>
-
 
 #define BUFLEN 10
 
@@ -179,11 +177,14 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
                         mTimeshift->unlock();
                         sprintf(buffer2,"RCVOK");
                         int rcvok = send(*new_socket, buffer2, strlen(buffer2), 0);
-                        if (rcvok==-1);
+                        if (rcvok==-1)
                         {
+                            connDeadMutex->lock();
+                            *conndead = true;
+                            connDeadMutex->unlock();
                             whaterror = errno;
-                            cout << stderr << "STDERR\n";
-                            cout << "RCVOK ERRNO " << whaterror << "\n";
+                            //cout << stderr << "STDERR\n";
+                            cout << "RECEIVE NOT OK ERRNO " << whaterror << "\n";
                         }
                     }
                     if (strncmp(buffer, "SHTDW", 5) == 0) {
