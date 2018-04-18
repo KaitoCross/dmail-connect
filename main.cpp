@@ -248,8 +248,10 @@ int main() {
     {
         cout << "ERROR BINDING " << bindsuc <<"\n";
         int errcode=errno;
+        mutConnDead.lock();
         conndead = false;
         endMyLife=true;
+        mutConnDead.unlock();
         cout <<errcode <<"\n";
         //return 0;
     } else {
