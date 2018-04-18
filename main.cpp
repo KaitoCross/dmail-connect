@@ -22,6 +22,7 @@
 #include <chrono>
 #include <err.h>
 #include <errno.h>
+//#include <libexplain/socket.h>
 
 
 #define BUFLEN 10
@@ -102,10 +103,12 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
                             *repliedToKeepalive = false;
                         }
                         connDeadMutex->unlock();
-                        if (send(*new_socket, "ELPSY", strlen("ELPSY"),0)==-1);
+                        int tempo=(int)send(*new_socket, "ELPSY", strlen("ELPSY"),0);
+                        if (tempo<1)
                         {
                             errorcode=errno;
-                            cout << "TIMEOUT CHECK ERRNO "<< errorcode << "\n";
+                            perror("send");
+                            cout << " BYTES SENT "<<tempo<<"\n TIMEOUT CHECK ERRNO "<< errorcode << "\n" << strerror(errorcode) <<" " << stderr <<"\n";
                             if (errorcode >= 100)
                             {
                                 shutdown(*new_socket, SHUT_RDWR);
@@ -179,15 +182,18 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
                         if (rcvok==-1);
                         {
                             whaterror = errno;
+                            cout << stderr << "STDERR\n";
                             cout << "RCVOK ERRNO " << whaterror << "\n";
                         }
                     }
                     if (strncmp(buffer, "SHTDW", 5) == 0) {
-                        send(*new_socket, "SDOWN", strlen("SDOWN"), 0);
+                        int bytes_sent = (int)send(*new_socket, "SDOWN", strlen("SDOWN"), 0);
+                        connDeadMutex->lock();
                         *endMyLife = true;
+                        connDeadMutex->unlock();
                     }
                     if (strncmp(buffer, "ELPSY", strlen("ELPSY")) == 0) {
-                        send(*new_socket, "KONGROO", strlen("KONGROO"), 0);
+                        int bytes_wtf = (int)send(*new_socket, "KONGROO", strlen("KONGROO"), 0);
                     }
                     if (strncmp(buffer, "KONGROO", strlen("KONGROO")) == 0) {
                         connDeadMutex->lock();
@@ -242,8 +248,10 @@ int main() {
     {
         cout << "ERROR BINDING " << bindsuc <<"\n";
         int errcode=errno;
+        mutConnDead.lock();
         conndead = false;
         endMyLife=true;
+        mutConnDead.unlock();
         cout <<errcode <<"\n";
         //return 0;
     } else {
@@ -259,7 +267,7 @@ int main() {
     }
     do {
         int i = 1;
-        sleep(2);
+        sleep(1);
         //mutConnDead.lock();
         while (conndead) {
             new_socket = accept(socketfd[1], (struct sockaddr *) &server, (socklen_t *) &addrlen);
