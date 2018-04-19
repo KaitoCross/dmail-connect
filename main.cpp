@@ -227,22 +227,24 @@ int main() {
     thread tcpglobal(tcp_writes_globally,&new_socket,&setbackHours,&endMyLife,&mailed,&ClientAliveConfirmed,&conndead,&mutSetbackHours,&mArrive,&mutConnDead);
     thread tcpreadglobal(tcp_reads_global,&new_socket,&setbackHours,&endMyLife,&mailed,&ClientAliveConfirmed,&conndead,&mutSetbackHours,&mArrive,&mutConnDead);
 
-    struct sockaddr_in server;
-    socketfd[1] = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in6 server;
+    socketfd[1] = socket(AF_INET6, SOCK_STREAM, 0);
     int trueFlag=1;
     setsockopt(socketfd[1], SOL_SOCKET, SO_REUSEADDR, &trueFlag, sizeof(int));
     setsockopt(socketfd[1], SOL_SOCKET, SO_REUSEPORT, &trueFlag, sizeof(int));
+    setsockopt(socketfd[1], IPPROTO_IPV6, IPV6_V6ONLY, 0, sizeof(int));
+
     if (socketfd[1]<0)
     {
         cout << "CANT CREATE SOCKET!\n";
         return 0;
     }
-    int addrlen = sizeof(server);
+    unsigned int addrlen = sizeof(server);
     /**bool conndead = false;*/
     char buffer[10]="";
-    server.sin_family = AF_INET;
-    server.sin_addr.s_addr = INADDR_ANY;
-    server.sin_port = htons(4242);
+    server.sin6_family = AF_INET6;
+    server.sin6_addr = in6addr_any;
+    server.sin6_port = htons(4242);
     cout << "ABOUT TO BIND TCP\n";
     int bindsuc = (int)bind(socketfd[1], (struct sockaddr *)&server, addrlen);
     if (bindsuc<0)
@@ -254,7 +256,7 @@ int main() {
         endMyLife=true;
         mutConnDead.unlock();
         cout <<errcode <<"\n";
-        //return 0;
+        return 0;
     } else {
         cout << "BOUND TCP\n";
     }
