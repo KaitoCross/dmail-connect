@@ -21,269 +21,371 @@
 #include <mutex>
 #include <chrono>
 #include <err.h>
-#include <errno.h>
+#include <cerrno>
+#include "SignalHandling.h"
 
 #define BUFLEN 10
 
 using namespace std;
 
 void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mailsent, mutex* mTimeshift, mutex* mutMailArr)
-    {
-        *sockfd = socket(AF_INET,SOCK_DGRAM,0);
-        struct sockaddr_in serv, client;
-        int olength=sizeof(client);
-        serv.sin_family = AF_INET;
-        serv.sin_port = htons(1337);
-        serv.sin_addr.s_addr = inet_addr("127.0.0.1");
-        socklen_t l = sizeof(client);
-        socklen_t m = sizeof(serv);
-        char buffer[10] = "";
-        bind(*sockfd, (struct sockaddr*)&serv, sizeof(serv));
-        char *ptr;
-        while(*endMyLife == false){
-            recvfrom(*sockfd,buffer,10,0,(struct sockaddr *)&client,&l);
-            if (strncmp(buffer, "REQTO", 5) == 0) {
-                cout << "RECEIVED TIME REQUEST\n";
-                mTimeshift->lock();
-                sprintf(buffer, "RCVTO %04d", *timeshift);
-                mTimeshift->unlock();
-                int sent = (int)sendto(*sockfd, buffer, 10, 0, (struct sockaddr *) &client, m);
-            }
-            if (strncmp(buffer, "MAILD", 5) == 0) {
-                cout << "MAIL PROCESSED\n";
-                mutMailArr->lock();
-                *mailsent=true;
-                mutMailArr->unlock();
-                strcpy(buffer,"REKKT");
-            }
+{
+    *sockfd = socket(AF_INET,SOCK_DGRAM,0);
+    struct sockaddr_in serv, client;
+    int olength=sizeof(client);
+    serv.sin_family = AF_INET;
+    serv.sin_port = htons(1337);
+    serv.sin_addr.s_addr = inet_addr("127.0.0.1");
+    socklen_t l = sizeof(client);
+    socklen_t m = sizeof(serv);
+    char buffer[10] = "";
+    bind(*sockfd, (struct sockaddr*)&serv, sizeof(serv));
+    char *ptr;
+    while(*endMyLife == false){
+        recvfrom(*sockfd,buffer,10,0,(struct sockaddr *)&client,&l);
+        if (strncmp(buffer, "REQTO", 5) == 0) {
+            syslog(LOG_NOTICE,"RECEIVED TIME REQUEST\n");
+            mTimeshift->lock();
+            sprintf(buffer, "RCVTO %04d", *timeshift);
+            mTimeshift->unlock();
+            int sent = (int)sendto(*sockfd, buffer, 10, 0, (struct sockaddr *) &client, m);
+        }
+        if (strncmp(buffer, "MAILD", 5) == 0) {
+            syslog(LOG_NOTICE, "MAIL PROCESSED\n");
+            mutMailArr->lock();
+            *mailsent=true;
+            mutMailArr->unlock();
+            strcpy(buffer,"REKKT");
         }
     }
+}
 
 void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool* mailsent,bool* repliedToKeepalive, bool* conndead, mutex* mTimeshift, mutex* mutMailArr, mutex* connDeadMutex)
-        {
-            typedef chrono::high_resolution_clock timerexact;
-            auto t2 = timerexact::now();
-            auto t1 = timerexact::now();
-            bool connDeadtemp=true;
-            bool killProgram=false;
-            int errorcode=1337;
-            int timeouts = 0;
-            /**bool conndead = false;*/
-            char buffer[10]="";
+{
+    typedef chrono::high_resolution_clock timerexact;
+    auto t2 = timerexact::now();
+    auto t1 = timerexact::now();
+    bool connDeadtemp=true;
+    bool killProgram=false;
+    int errorcode=1337;
+    int timeouts = 0;
+    stringstream logmsg;
+    /**bool conndead = false;*/
+    char buffer[10]="";
 
-            do {
+    do {
+        connDeadMutex->lock();
+        connDeadtemp=*conndead;
+        killProgram=*endMyLife;
+        connDeadMutex->unlock();
+        while (!killProgram && !connDeadtemp) {
+            mutMailArr->lock();
+            if (*mailsent) {
+                send(*new_socket, "MAILD", strlen("MAILD"), 0);
+                *mailsent = false;
+            }
+            mutMailArr->unlock();
+            //check for timeout - keepalive packet
+            t1 = timerexact::now();
+            long seconds_passed = chrono::duration_cast<std::chrono::seconds>(t1-t2).count();
+            if (seconds_passed >= 5)
+            {
                 connDeadMutex->lock();
-                connDeadtemp=*conndead;
-                killProgram=*endMyLife;
-                connDeadMutex->unlock();
-                while (!killProgram && !connDeadtemp) {
-                    mutMailArr->lock();
-                    if (*mailsent) {
-                        send(*new_socket, "MAILD", strlen("MAILD"), 0);
-                        *mailsent = false;
+                if (!*repliedToKeepalive)
+                {
+                    timeouts++;
+                    if(timeouts>3) {
+                        *conndead = true;
+                        syslog(LOG_NOTICE, "CONNECTION LOST - NO REPLY\n");
+                        timeouts = 0;
                     }
-                    mutMailArr->unlock();
-                    //check for timeout - keepalive packet
-                    t1 = timerexact::now();
-                    long seconds_passed = chrono::duration_cast<std::chrono::seconds>(t1-t2).count();
-                    if (seconds_passed >= 5)
-                    {
-                        connDeadMutex->lock();
-                        if (!*repliedToKeepalive)
-                        {
-                            timeouts++;
-                            if(timeouts>3) {
-                                *conndead = true;
-                                cout << "CONNECTION LOST - NO REPLY\n";
-                                timeouts = 0;
-                            }
-                        } else {
-                            *repliedToKeepalive = false;
-                        }
-                        connDeadMutex->unlock();
-                        int tempo=(int)send(*new_socket, "ELPSY", strlen("ELPSY"),0);
-                        if (tempo<1)
-                        {
-                            errorcode=errno;
-                            perror("send");
-                            cout << " BYTES SENT "<<tempo<<"\n TIMEOUT CHECK ERRNO "<< errorcode << "\n" << strerror(errorcode) <<" " << stderr <<"\n";
-                            if (errorcode >= 100)
-                            {
-                                shutdown(*new_socket, SHUT_RDWR);
-                                close(*new_socket);
-                                connDeadMutex->lock();
-                                *conndead = true;
-                                connDeadMutex->unlock();
-                                cout << "CONNECTION LOST\n";
-                            }
-                        }
-                        t2=timerexact::now();
-                    }
-                    connDeadtemp=*conndead;
-                    killProgram=*endMyLife;
-                    connDeadMutex->unlock();
+                } else {
+                    *repliedToKeepalive = false;
                 }
-                connDeadMutex->lock();
-                killProgram=*endMyLife;
                 connDeadMutex->unlock();
-            }while (killProgram==false);
-        }
-
-        void stopdaemon(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, thread* firstThread, thread* secondThread, thread* thirdThread)
-        {
-            shutdown(*connfd,SHUT_RDWR);
-            for (int i = 0; i < sockfdamount; i++) {
-                shutdown(sockfd[i],SHUT_RDWR);
-            }
-            sleep(2);
-            close(*connfd);
-            for (int i = 0; i < sockfdamount; i++) {
-                close(sockfd[i]);
-            }
-            *endMyLife = true;
-            firstThread->join();
-            secondThread->join();
-            thirdThread->join();
-            cout << "SHUTDOWN DONE";
-        }
-
-        void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* mailsent, bool* repliedToKeepalive, bool* conndead, mutex* mTimeshift, mutex* mutMailArr, mutex* connDeadMutex)
-        {
-            bool connDeadTemp = false;
-            bool killProgram=false;
-            char buffer[10]="";
-            char buffer2[10]="";
-            int whaterror=1337;
-            do {
-                connDeadMutex->lock();
-                connDeadTemp=*conndead;
-                killProgram=*endMyLife;
-                connDeadMutex->unlock();
-                while (!connDeadTemp && !killProgram) {
-                    int valread = (int) read(*new_socket, buffer, 10);
-                    if (valread == 0) {
+                int tempo=(int)send(*new_socket, "ELPSY", strlen("ELPSY"),0);
+                if (tempo<1)
+                {
+                    errorcode=errno;
+                    perror("send");
+                    logmsg << " BYTES SENT "<<tempo<<"\n TIMEOUT CHECK ERRNO "<< errorcode << "\n" << strerror(errorcode) <<" " << stderr <<"\n";
+                    syslog(LOG_ERR,logmsg.str().c_str());
+                    logmsg.clear();
+                    logmsg.str("");
+                    if (errorcode >= 100)
+                    {
+                        shutdown(*new_socket, SHUT_RDWR);
+                        close(*new_socket);
                         connDeadMutex->lock();
                         *conndead = true;
                         connDeadMutex->unlock();
-                        cout << "CONNECTION LOST 0 PACKET\n";
-                        shutdown(*new_socket,SHUT_RDWR);
-                        close(*new_socket);
+                        syslog(LOG_ERR,"CONNECTION LOST\n");
                     }
-                    if (strncmp(buffer, "RCVTO", 5) == 0) {
-                        char *endOfBuffer = &buffer[10];
-                        mTimeshift->lock();
-                        *timeshift = (int) strtol(buffer + 6, &endOfBuffer, 10);
-                        cout << "RECEIVED NEW TIME\n";
-                        mTimeshift->unlock();
-                        sprintf(buffer2,"RCVOK");
-                        int rcvok = (int)send(*new_socket, buffer2, strlen(buffer2), 0);
-                        if (rcvok==-1)
-                        {
-                            connDeadMutex->lock();
-                            *conndead = true;
-                            connDeadMutex->unlock();
-                            whaterror = errno;
-                            //cout << stderr << "STDERR\n";
-                            cout << "RECEIVE NOT OK ERRNO " << whaterror << "\n";
-                        }
-                    }
-                    if (strncmp(buffer, "SHTDW", 5) == 0) {
-                        int bytes_sent = (int)send(*new_socket, "SDOWN", strlen("SDOWN"), 0);
-                        connDeadMutex->lock();
-                        *endMyLife = true;
-                        connDeadMutex->unlock();
-                    }
-                    if (strncmp(buffer, "ELPSY", strlen("ELPSY")) == 0) {
-                        int bytes_wtf = (int)send(*new_socket, "KONGROO", strlen("KONGROO"), 0);
-                    }
-                    if (strncmp(buffer, "KONGROO", strlen("KONGROO")) == 0) {
-                        connDeadMutex->lock();
-                        *repliedToKeepalive=true;
-                        connDeadMutex->unlock();
-                    }
-                    connDeadMutex->lock();
-                    connDeadTemp=*conndead;
-                    killProgram=*endMyLife;
-                    connDeadMutex->unlock();
                 }
-                connDeadMutex->lock();
-                killProgram=*endMyLife;
-                connDeadMutex->unlock();
-            } while (!killProgram);
+                t2=timerexact::now();
+            }
+            connDeadtemp=*conndead;
+            killProgram=*endMyLife;
+            connDeadMutex->unlock();
         }
+        connDeadMutex->lock();
+        killProgram=*endMyLife;
+        connDeadMutex->unlock();
+    }while (killProgram==false);
+}
 
-int main() {
-    int setbackHours=0;
+void stopdaemon(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, thread* firstThread, thread* secondThread, thread* thirdThread)
+{
+    shutdown(*connfd,SHUT_RDWR);
+    for (int i = 0; i < sockfdamount; i++) {
+        shutdown(sockfd[i],SHUT_RDWR);
+    }
+    sleep(2);
+    close(*connfd);
+    for (int i = 0; i < sockfdamount; i++) {
+        close(sockfd[i]);
+    }
+    *endMyLife = true;
+    firstThread->join();
+    secondThread->join();
+    thirdThread->join();
+    syslog(LOG_NOTICE,"SHUTDOWN DONE");
+}
+
+void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* mailsent, bool* repliedToKeepalive, bool* conndead, mutex* mTimeshift, mutex* mutMailArr, mutex* connDeadMutex)
+{
+    bool connDeadTemp = false;
+    bool killProgram=false;
+    char buffer[10]="";
+    char buffer2[10]="";
+    int whaterror=1337;
+    stringstream msg;
+    do {
+        connDeadMutex->lock();
+        connDeadTemp=*conndead;
+        killProgram=*endMyLife;
+        connDeadMutex->unlock();
+        while (!connDeadTemp && !killProgram) {
+            int valread = (int) read(*new_socket, buffer, 10);
+            if (valread == 0) {
+                connDeadMutex->lock();
+                *conndead = true;
+                connDeadMutex->unlock();
+                syslog(LOG_NOTICE,"CONNECTION LOST 0 PACKET\n");
+                shutdown(*new_socket,SHUT_RDWR);
+                close(*new_socket);
+            }
+            if (strncmp(buffer, "RCVTO", 5) == 0) {
+                char *endOfBuffer = &buffer[10];
+                mTimeshift->lock();
+                *timeshift = (int) strtol(buffer + 6, &endOfBuffer, 10);
+                syslog(LOG_NOTICE,"RECEIVED NEW TIME\n");
+                mTimeshift->unlock();
+                sprintf(buffer2,"RCVOK");
+                int rcvok = (int)send(*new_socket, buffer2, strlen(buffer2), 0);
+                if (rcvok==-1)
+                {
+                    connDeadMutex->lock();
+                    *conndead = true;
+                    connDeadMutex->unlock();
+                    whaterror = errno;
+                    //cout << stderr << "STDERR\n";
+                    msg << "RECEIVE NOT OK ERRNO " << whaterror << "\n";
+                    syslog(LOG_ERR,msg.str().c_str());
+                    msg.clear();
+                    msg.str("");
+                }
+            }
+            if (strncmp(buffer, "SHTDW", 5) == 0) {
+                int bytes_sent = (int)send(*new_socket, "SDOWN", strlen("SDOWN"), 0);
+                connDeadMutex->lock();
+                *endMyLife = true;
+                connDeadMutex->unlock();
+            }
+            if (strncmp(buffer, "ELPSY", strlen("ELPSY")) == 0) {
+                int bytes_wtf = (int)send(*new_socket, "KONGROO", strlen("KONGROO"), 0);
+            }
+            if (strncmp(buffer, "KONGROO", strlen("KONGROO")) == 0) {
+                connDeadMutex->lock();
+                *repliedToKeepalive=true;
+                connDeadMutex->unlock();
+            }
+            connDeadMutex->lock();
+            connDeadTemp=*conndead;
+            killProgram=*endMyLife;
+            connDeadMutex->unlock();
+        }
+        connDeadMutex->lock();
+        killProgram=*endMyLife;
+        connDeadMutex->unlock();
+    } while (!killProgram);
+}
+
+
+void do_heartbeat() {
+    int setbackHours = 0;
     bool endMyLife = false;
     bool mailed = false;
     bool conndead = true;
     bool ClientAliveConfirmed = false;
-    int new_socket=0;
+    int new_socket = 0;
     int socketfd[2];
     mutex mArrive;
     mutex mutSetbackHours;
     mutex mutConnDead;
-    thread udplocal(udp_listens_locally,&socketfd[0],&setbackHours,&endMyLife,&mailed,&mutSetbackHours,&mArrive);
-    thread tcpglobal(tcp_writes_globally,&new_socket,&setbackHours,&endMyLife,&mailed,&ClientAliveConfirmed,&conndead,&mutSetbackHours,&mArrive,&mutConnDead);
-    thread tcpreadglobal(tcp_reads_global,&new_socket,&setbackHours,&endMyLife,&mailed,&ClientAliveConfirmed,&conndead,&mutSetbackHours,&mArrive,&mutConnDead);
-
+    thread udplocal(udp_listens_locally, &socketfd[0], &setbackHours, &endMyLife, &mailed, &mutSetbackHours, &mArrive);
+    thread tcpglobal(tcp_writes_globally, &new_socket, &setbackHours, &endMyLife, &mailed, &ClientAliveConfirmed,
+                     &conndead, &mutSetbackHours, &mArrive, &mutConnDead);
+    thread tcpreadglobal(tcp_reads_global, &new_socket, &setbackHours, &endMyLife, &mailed, &ClientAliveConfirmed,
+                         &conndead, &mutSetbackHours, &mArrive, &mutConnDead);
+    stringstream logmsg;
     struct sockaddr_in6 server;
     socketfd[1] = socket(AF_INET6, SOCK_STREAM, 0);
-    int trueFlag=1;
+    int trueFlag = 1;
+
     setsockopt(socketfd[1], SOL_SOCKET, SO_REUSEADDR, &trueFlag, sizeof(int));
     setsockopt(socketfd[1], SOL_SOCKET, SO_REUSEPORT, &trueFlag, sizeof(int));
     setsockopt(socketfd[1], IPPROTO_IPV6, IPV6_V6ONLY, 0, sizeof(int));
 
-    if (socketfd[1]<0)
-    {
-        cout << "CANT CREATE SOCKET!\n";
-        return 0;
+
+    if (socketfd[1] < 0) {
+        syslog(LOG_ERR,"CANT CREATE SOCKET!\n");
+        return;
     }
     unsigned int addrlen = sizeof(server);
     /**bool conndead = false;*/
-    char buffer[10]="";
+    char buffer[10] = "";
     server.sin6_family = AF_INET6;
     server.sin6_addr = in6addr_any;
     server.sin6_port = htons(4242);
-    cout << "ABOUT TO BIND TCP\n";
-    int bindsuc = (int)bind(socketfd[1], (struct sockaddr *)&server, addrlen);
-    if (bindsuc<0)
-    {
-        cout << "ERROR BINDING " << bindsuc <<"\n";
-        int errcode=errno;
+    syslog(LOG_NOTICE,"ABOUT TO BIND TCP\n");
+    int bindsuc = (int) bind(socketfd[1], (struct sockaddr *) &server, addrlen);
+    if (bindsuc < 0) {
+        logmsg << "ERROR BINDING " << bindsuc << "\n";
+        syslog(LOG_ERR,logmsg.str().c_str());
+        logmsg.clear();
+        logmsg.str("");
+        int errcode = errno;
+
         mutConnDead.lock();
         conndead = false;
-        endMyLife=true;
+        endMyLife = true;
         mutConnDead.unlock();
-        cout <<errcode <<"\n";
-        return 0;
-    } else {
-        cout << "BOUND TCP\n";
-    }
-    int listensuc = listen(socketfd[1],1);
-    if (listensuc)
-    {
-        cout << "ERROR LISTENING " << listensuc <<"\n";
-        return 0;
-    } else {
-        cout << "LISTENING TCP\n";
-    }
-    do {
-        int i = 1;
-        sleep(1);
-        //mutConnDead.lock();
-        while (conndead) {
-            new_socket = accept(socketfd[1], (struct sockaddr *) &server, (socklen_t *) &addrlen);
-            cout << "CONNECTION ESTABLISHED!\n";
-            mutConnDead.lock();
-            conndead = false;
-            ClientAliveConfirmed=true;
-            mutConnDead.unlock();
-        }
-        //mutConnDead.unlock();
-    }while  (endMyLife == false);
-        endMyLife=true;
-        stopdaemon(socketfd, 2, &new_socket, &endMyLife, &udplocal, &tcpglobal, &tcpreadglobal);
 
-    return 0;
+        logmsg << errcode << "\n";
+        syslog(LOG_ERR, logmsg.str().c_str());
+        logmsg.clear();
+        logmsg.str("");
+        return;
+
+    } else {
+        syslog(LOG_NOTICE, "BOUND TCP\n");
+    }
+    int listensuc = listen(socketfd[1], 1);
+    if (listensuc) {
+        logmsg << "ERROR LISTENING " << listensuc << "\n";
+        syslog(LOG_ERR, logmsg.str().c_str());
+        logmsg.str("");
+        logmsg.clear();
+        return;
+    } else {
+        syslog(LOG_NOTICE,"LISTENING TCP\n");
+    }
+    try {
+        SignalHandling theHandler(socketfd, 2, &new_socket, &endMyLife, &udplocal, &tcpglobal, &tcpreadglobal);
+        theHandler.setupSignalHandlers();
+        do {
+            int i = 1;
+            sleep(1);
+            //mutConnDead.lock();
+            while (conndead) {
+                new_socket = accept(socketfd[1], (struct sockaddr *) &server, (socklen_t *) &addrlen);
+                syslog(LOG_NOTICE,"CONNECTION ESTABLISHED!\n");
+                mutConnDead.lock();
+                conndead = false;
+                ClientAliveConfirmed = true;
+                mutConnDead.unlock();
+            }
+            //mutConnDead.unlock();
+        } while (endMyLife == false);
+        endMyLife = true;
+        if (!theHandler.gotExitSignal()) {
+            stopdaemon(socketfd, 2, &new_socket, &endMyLife, &udplocal, &tcpglobal, &tcpreadglobal);
+        }
+    }
+    catch (SignalException& e) {
+        logmsg << "SignalException: " << e.what();
+        syslog(LOG_ERR,logmsg.str().c_str());
+        logmsg.str("");
+        logmsg.clear();
+    }
+}
+// For security purposes, we don't allow any arguments to be passed into the daemon
+int main(void)
+{
+    // Define variables
+    pid_t pid, sid;
+
+    // Fork the current process
+    pid = fork();
+    // The parent process continues with a process ID greater than 0
+    if(pid > 0)
+    {
+        exit(EXIT_SUCCESS);
+    }
+        // A process ID lower than 0 indicates a failure in either process
+    else if(pid < 0)
+    {
+        exit(EXIT_FAILURE);
+    }
+    // The parent process has now terminated, and the forked child process will continue
+    // (the pid of the child process was 0)
+
+    // Since the child process is a daemon, the umask needs to be set so files and logs can be written
+    umask(0);
+
+    // Open system logs for the child process
+    openlog("dmail-connect", LOG_NOWAIT | LOG_PID, LOG_USER);
+    syslog(LOG_NOTICE, "Successfully started dmail-connect");
+
+    // Generate a session ID for the child process
+    sid = setsid();
+    // Ensure a valid SID for the child process
+    if(sid < 0)
+    {
+        // Log failure and exit
+        syslog(LOG_ERR, "Could not generate session ID for child process");
+
+        // If a new session ID could not be generated, we must terminate the child process
+        // or it will be orphaned
+        exit(EXIT_FAILURE);
+    }
+
+    // Change the current working directory to a directory guaranteed to exist
+    if((chdir("/")) < 0)
+    {
+        // Log failure and exit
+        syslog(LOG_ERR, "Could not change working directory to /");
+
+        // If our guaranteed directory does not exist, terminate the child process to ensure
+        // the daemon has not been hijacked
+        exit(EXIT_FAILURE);
+    }
+
+    // A daemon cannot use the terminal, so close standard file descriptors for security reasons
+    close(STDIN_FILENO);
+    close(STDOUT_FILENO);
+    close(STDERR_FILENO);
+
+    // Daemon-specific intialization should go here
+    const int SLEEP_INTERVAL = 5;
+        //execute daemon heartbeat - infinite loop in function
+    do_heartbeat();
+
+    // Close system logs for the child process
+    syslog(LOG_NOTICE, "Stopping dmail-connect");
+    closelog();
+
+    // Terminate the child process when the daemon completes
+    exit(EXIT_SUCCESS);
 }
