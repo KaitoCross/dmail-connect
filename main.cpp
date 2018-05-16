@@ -242,9 +242,11 @@ void do_heartbeat() {
     struct sockaddr_in6 server;
     socketfd[1] = socket(AF_INET6, SOCK_STREAM, 0);
     int trueFlag = 1;
+
     setsockopt(socketfd[1], SOL_SOCKET, SO_REUSEADDR, &trueFlag, sizeof(int));
     setsockopt(socketfd[1], SOL_SOCKET, SO_REUSEPORT, &trueFlag, sizeof(int));
     setsockopt(socketfd[1], IPPROTO_IPV6, IPV6_V6ONLY, 0, sizeof(int));
+
 
     if (socketfd[1] < 0) {
         syslog(LOG_ERR,"CANT CREATE SOCKET!\n");
@@ -264,15 +266,18 @@ void do_heartbeat() {
         logmsg.clear();
         logmsg.str("");
         int errcode = errno;
+
         mutConnDead.lock();
         conndead = false;
         endMyLife = true;
         mutConnDead.unlock();
+
         logmsg << errcode << "\n";
         syslog(LOG_ERR, logmsg.str().c_str());
         logmsg.clear();
         logmsg.str("");
         return;
+
     } else {
         syslog(LOG_NOTICE, "BOUND TCP\n");
     }
