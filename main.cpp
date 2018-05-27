@@ -324,7 +324,7 @@ int main(void)
     pid_t pid, sid;
 
     // Fork the current process
-    //pid = fork();
+    pid = fork();
     // The parent process continues with a process ID greater than 0
     if(pid > 0)
     {
