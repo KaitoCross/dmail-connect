@@ -131,6 +131,7 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
         connDeadMutex->lock();
         killProgram=*endMyLife;
         connDeadMutex->unlock();
+        sleep(1);
     }while (killProgram==false);
 }
 
@@ -218,6 +219,7 @@ void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* ma
         connDeadMutex->lock();
         killProgram=*endMyLife;
         connDeadMutex->unlock();
+        sleep(1);
     } while (!killProgram);
 }
 
@@ -242,11 +244,9 @@ void do_heartbeat() {
     struct sockaddr_in6 server;
     socketfd[1] = socket(AF_INET6, SOCK_STREAM, 0);
     int trueFlag = 1;
-
     setsockopt(socketfd[1], SOL_SOCKET, SO_REUSEADDR, &trueFlag, sizeof(int));
     setsockopt(socketfd[1], SOL_SOCKET, SO_REUSEPORT, &trueFlag, sizeof(int));
     setsockopt(socketfd[1], IPPROTO_IPV6, IPV6_V6ONLY, 0, sizeof(int));
-
 
     if (socketfd[1] < 0) {
         syslog(LOG_ERR,"CANT CREATE SOCKET!\n");
@@ -266,18 +266,15 @@ void do_heartbeat() {
         logmsg.clear();
         logmsg.str("");
         int errcode = errno;
-
         mutConnDead.lock();
         conndead = false;
         endMyLife = true;
         mutConnDead.unlock();
-
         logmsg << errcode << "\n";
         syslog(LOG_ERR, logmsg.str().c_str());
         logmsg.clear();
         logmsg.str("");
         return;
-
     } else {
         syslog(LOG_NOTICE, "BOUND TCP\n");
     }
@@ -296,9 +293,9 @@ void do_heartbeat() {
         theHandler.setupSignalHandlers();
         do {
             int i = 1;
-            sleep(1);
             //mutConnDead.lock();
             while (conndead) {
+                sleep(1);
                 new_socket = accept(socketfd[1], (struct sockaddr *) &server, (socklen_t *) &addrlen);
                 syslog(LOG_NOTICE,"CONNECTION ESTABLISHED!\n");
                 mutConnDead.lock();
@@ -327,7 +324,7 @@ int main(void)
     pid_t pid, sid;
 
     // Fork the current process
-    pid = fork();
+    //pid = fork();
     // The parent process continues with a process ID greater than 0
     if(pid > 0)
     {
