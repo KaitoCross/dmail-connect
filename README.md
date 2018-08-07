@@ -3,7 +3,7 @@ This is a simple program used to relay the offset given by SIP-Pi to others via 
 It listens on Port 4242 for incoming TCP connections and port 1337 for communication via localhost via UDP.  
 With ANY SIP-Pi client, i mean really every SIP-Pi client in this world can connect, first come first served :D  
 No password authentification is implementend yet, use at your own risk!   
-##### FGP – Future Gadget Protocol:  
+#### FGP – Future Gadget Protocol:  
 REQTO : request current time offset  
 RCVTO (int hours) : receive/set time offset (int hours)  
 RCVOK : successfully received new offset  
@@ -11,13 +11,13 @@ MAILD : sent when mail processed
 ELPSY : used for connection keepalive  
 KONGROO : used for connection keepalive  
 
-##### How to install  
+#### How to install  
 
 Clone this repository into your favourite location
 then hit `make dmail-connect`
 Then simply run dmail-connect. Put it into the autostart if needed with your favourite method.
 
-##### Ideas not implemented yet:  
+#### Ideas not implemented yet:  
 * Authentification through password for client
 * encryption?
 * listening to single IP address
