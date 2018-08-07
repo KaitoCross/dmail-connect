@@ -30,6 +30,7 @@ using namespace std;
 
 void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mailsent, mutex* mTimeshift, mutex* mutMailArr)
 {
+    /*Listens to requests from dmail-filter locally)*/
     *sockfd = socket(AF_INET,SOCK_DGRAM,0);
     struct sockaddr_in serv, client;
     int olength=sizeof(client);
@@ -43,7 +44,9 @@ void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mai
     char *ptr;
     while(*endMyLife == false){
         recvfrom(*sockfd,buffer,10,0,(struct sockaddr *)&client,&l);
+        /* Parsing incoming messages*/
         if (strncmp(buffer, "REQTO", 5) == 0) {
+            //Time request received: Send out offset to filter program
             syslog(LOG_NOTICE,"RECEIVED TIME REQUEST\n");
             mTimeshift->lock();
             sprintf(buffer, "RCVTO %04d", *timeshift);
@@ -51,6 +54,7 @@ void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mai
             int sent = (int)sendto(*sockfd, buffer, 10, 0, (struct sockaddr *) &client, m);
         }
         if (strncmp(buffer, "MAILD", 5) == 0) {
+            //Mail processed by filter, information is important for the SIP-Pi client! will be relayed later!
             syslog(LOG_NOTICE, "MAIL PROCESSED\n");
             mutMailArr->lock();
             *mailsent=true;
@@ -62,11 +66,11 @@ void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mai
 
 void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool* mailsent,bool* repliedToKeepalive, bool* conndead, mutex* mTimeshift, mutex* mutMailArr, mutex* connDeadMutex)
 {
-    typedef chrono::high_resolution_clock timerexact;
-    auto t2 = timerexact::now();
-    auto t1 = timerexact::now();
-    bool connDeadtemp=true;
-    bool killProgram=false;
+    typedef chrono::high_resolution_clock timerexact; //used for keepalive check
+    auto t2 = timerexact::now(); //used for keepalive check
+    auto t1 = timerexact::now(); //used for keepalive check
+    bool connDeadtemp=true; //connection dead?
+    bool killProgram=false; //to end the loop when program needs to quit
     int errorcode=1337;
     int timeouts = 0;
     stringstream logmsg;
@@ -78,20 +82,20 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
         connDeadtemp=*conndead;
         killProgram=*endMyLife;
         connDeadMutex->unlock();
-        while (!killProgram && !connDeadtemp) {
+        while (!killProgram && !connDeadtemp) { //when everything is alright
             mutMailArr->lock();
-            if (*mailsent) {
+            if (*mailsent) { //when filter was successful, tell the TCP client
                 send(*new_socket, "MAILD", strlen("MAILD"), 0);
                 *mailsent = false;
             }
             mutMailArr->unlock();
-            //check for timeout - keepalive packet
+            //check for timeout - custom keepalive packet after 5 secs
             t1 = timerexact::now();
             long seconds_passed = chrono::duration_cast<std::chrono::seconds>(t1-t2).count();
             if (seconds_passed >= 5)
             {
                 connDeadMutex->lock();
-                if (!*repliedToKeepalive)
+                if (!*repliedToKeepalive) //reply will be detected by tcp reader thread
                 {
                     timeouts++;
                     if(timeouts>3) {
@@ -103,7 +107,7 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
                     *repliedToKeepalive = false;
                 }
                 connDeadMutex->unlock();
-                int tempo=(int)send(*new_socket, "ELPSY", strlen("ELPSY"),0);
+                int tempo=(int)send(*new_socket, "ELPSY", strlen("ELPSY"),0); //sending keepalive packet
                 if (tempo<1)
                 {
                     errorcode=errno;
@@ -112,7 +116,7 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
                     syslog(LOG_ERR,logmsg.str().c_str());
                     logmsg.clear();
                     logmsg.str("");
-                    if (errorcode >= 100)
+                    if (errorcode >= 100) //error handling
                     {
                         shutdown(*new_socket, SHUT_RDWR);
                         close(*new_socket);
@@ -176,14 +180,14 @@ void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* ma
                 shutdown(*new_socket,SHUT_RDWR);
                 close(*new_socket);
             }
-            if (strncmp(buffer, "RCVTO", 5) == 0) {
-                char *endOfBuffer = &buffer[10];
+            if (strncmp(buffer, "RCVTO", 5) == 0) { //New offset received by SIP-Pi client!
+                char *endOfBuffer = &buffer[10];    //Write new offset into memory later
                 mTimeshift->lock();
                 *timeshift = (int) strtol(buffer + 6, &endOfBuffer, 10);
                 syslog(LOG_NOTICE,"RECEIVED NEW TIME\n");
                 mTimeshift->unlock();
                 sprintf(buffer2,"RCVOK");
-                int rcvok = (int)send(*new_socket, buffer2, strlen(buffer2), 0);
+                int rcvok = (int)send(*new_socket, buffer2, strlen(buffer2), 0); //send RCVOK (signalling everything is ok)
                 if (rcvok==-1)
                 {
                     connDeadMutex->lock();
@@ -197,18 +201,18 @@ void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* ma
                     msg.str("");
                 }
             }
-            if (strncmp(buffer, "SHTDW", 5) == 0) {
+            if (strncmp(buffer, "SHTDW", 5) == 0) { //secret shutdown command for this program
                 int bytes_sent = (int)send(*new_socket, "SDOWN", strlen("SDOWN"), 0);
                 connDeadMutex->lock();
                 *endMyLife = true;
                 connDeadMutex->unlock();
             }
             if (strncmp(buffer, "ELPSY", strlen("ELPSY")) == 0) {
-                int bytes_wtf = (int)send(*new_socket, "KONGROO", strlen("KONGROO"), 0);
+                int bytes_wtf = (int)send(*new_socket, "KONGROO", strlen("KONGROO"), 0); //Reply to keepalive packet
             }
             if (strncmp(buffer, "KONGROO", strlen("KONGROO")) == 0) {
                 connDeadMutex->lock();
-                *repliedToKeepalive=true;
+                *repliedToKeepalive=true; //Keepalive packet received, telling other thread
                 connDeadMutex->unlock();
             }
             connDeadMutex->lock();
@@ -295,6 +299,7 @@ void do_heartbeat() {
             int i = 1;
             //mutConnDead.lock();
             while (conndead) {
+                //when connection to client died, establish connection again with next client
                 sleep(1);
                 new_socket = accept(socketfd[1], (struct sockaddr *) &server, (socklen_t *) &addrlen);
                 syslog(LOG_NOTICE,"CONNECTION ESTABLISHED!\n");
@@ -376,7 +381,7 @@ int main(void)
 
     // Daemon-specific intialization should go here
     const int SLEEP_INTERVAL = 5;
-        //execute daemon heartbeat - infinite loop in function
+    //execute daemon heartbeat - infinite loop in function
     do_heartbeat();
 
     // Close system logs for the child process
