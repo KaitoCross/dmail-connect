@@ -94,6 +94,10 @@ void SignalHandling::setupSignalHandlers()
     {
         throw SignalException("!!!!! Error setting up signal handlers !!!!!");
     }
+    if (signal(SIGUSR1, SignalHandling::exitSignalHandler) == SIG_ERR)
+    {
+        throw SignalException("!!!!! Error setting up signal handlers !!!!!");
+    }
 }
 
 SignalHandling::SignalHandling(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, std::thread* firstThread, std::thread* secondThread, std::thread* thirdThread)
