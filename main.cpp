@@ -29,7 +29,7 @@
 
 using namespace std;
 
-void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mailsent, mutex* mTimeshift, mutex* mutMailArr)
+void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mailsent, mutex* mTimeshift, mutex* mutMailArr, sem_t *connSem)
 {
     /*Listens to requests from dmail-filter locally)*/
     *sockfd = socket(AF_INET,SOCK_DGRAM,0);
@@ -41,8 +41,8 @@ void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mai
     socklen_t m = sizeof(serv);
     char buffer[10] = "";
     bind(*sockfd, (struct sockaddr*)&serv, sizeof(serv));
-
-    while(!endMyLife){
+    //sem_wait(connSem);
+    while(!*endMyLife){
         recvfrom(*sockfd,buffer,10,0,(struct sockaddr *)&client,&l);
         /* Parsing incoming messages*/
         if (strncmp(buffer, "REQTO", 5) == 0) {
@@ -243,7 +243,7 @@ void do_heartbeat() {
     sem_init(&disconnectSem,0,2);
     sem_t connectSem;
     sem_init(&connectSem,0,0);
-    thread udplocal(udp_listens_locally, &socketfd[0], &setbackHours, &endMyLife, &mailed, &mutSetbackHours, &mArrive);
+    thread udplocal(udp_listens_locally, &socketfd[0], &setbackHours, &endMyLife, &mailed, &mutSetbackHours, &mArrive, &connectSem);
     thread tcpglobal(tcp_writes_globally, &new_socket, &endMyLife, &mailed, &ClientAliveConfirmed,
                      &conndead, &mArrive, &mutConnDead, &disconnectSem, &connectSem);
     thread tcpreadglobal(tcp_reads_global, &new_socket, &setbackHours, &endMyLife, &ClientAliveConfirmed,
@@ -310,6 +310,7 @@ void do_heartbeat() {
                 mutConnDead.unlock();
                 if (new_socket > 0)
                 {
+                    sem_post(&connectSem);
                     sem_post(&connectSem);
                     sem_post(&connectSem);
                 }
