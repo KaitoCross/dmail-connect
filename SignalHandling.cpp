@@ -15,6 +15,7 @@
 #include <csignal>
 #include <sys/stat.h>
 #include <mutex>
+#include <semaphore.h>
 
 using namespace std;
 
@@ -23,6 +24,7 @@ bool *SignalHandling::endMyLife = NULL;
 bool *SignalHandling::conndead = NULL;
 int *SignalHandling::new_socket = NULL;
 int *SignalHandling::socketfd = NULL;
+sem_t *SignalHandling::connSem = NULL;
 int SignalHandling::sockfds_open = 0;
 thread *SignalHandling::openThreads[3];
 
@@ -69,12 +71,13 @@ void SignalHandling::exitSignalHandler(int _ignored)
     for (int i = 0; i < sockfds_open; i++) {
         shutdown(socketfd[i],SHUT_RDWR);
     }
-    sleep(2);
     close(*new_socket);
     for (int i = 0; i < sockfds_open; i++) {
         close(socketfd[i]);
     }
     *endMyLife = true;
+    sem_post(connSem);
+    sem_post(connSem);
     openThreads[0]->join();
     openThreads[1]->join();
     openThreads[2]->join();
@@ -100,7 +103,7 @@ void SignalHandling::setupSignalHandlers()
     }
 }
 
-SignalHandling::SignalHandling(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, std::thread* firstThread, std::thread* secondThread, std::thread* thirdThread)
+SignalHandling::SignalHandling(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, std::thread* firstThread, std::thread* secondThread, std::thread* thirdThread, sem_t *connSema)
 {
     sockfds_open=sockfdamount;
     socketfd = sockfd;
@@ -109,4 +112,5 @@ SignalHandling::SignalHandling(int sockfd[], int sockfdamount, int *connfd, bool
     openThreads[0] = firstThread;
     openThreads[1] = secondThread;
     openThreads[2] = thirdThread;
+    connSem = connSema;
 }

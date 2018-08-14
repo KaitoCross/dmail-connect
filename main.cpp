@@ -295,7 +295,7 @@ void do_heartbeat() {
         syslog(LOG_NOTICE,"%s","LISTENING TCP\n");
     }
     try {
-        SignalHandling theHandler(socketfd, 2, &new_socket, &endMyLife, &udplocal, &tcpglobal, &tcpreadglobal);
+        SignalHandling theHandler(socketfd, 2, &new_socket, &endMyLife, &udplocal, &tcpglobal, &tcpreadglobal, &connectSem);
         theHandler.setupSignalHandlers();
         do {
             sem_wait(&disconnectSem);
@@ -316,10 +316,9 @@ void do_heartbeat() {
             }
         } while (!endMyLife);
         endMyLife = true;
-
-        sem_post(&connectSem);
-        sem_post(&connectSem);
         if (!theHandler.gotExitSignal()) {
+            sem_post(&connectSem);
+            sem_post(&connectSem);
             stopdaemon(socketfd, 2, &new_socket, &endMyLife, &udplocal, &tcpglobal, &tcpreadglobal);
         }
         sem_destroy(&disconnectSem);
@@ -350,6 +349,7 @@ int main(void)
     {
         exit(EXIT_FAILURE);
     }
+
     // The parent process has now terminated, and the forked child process will continue
     // (the pid of the child process was 0)
 

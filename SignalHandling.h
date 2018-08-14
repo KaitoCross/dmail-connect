@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <mutex>
 #include <thread>
+#include <semaphore.h>
 
 
 using std::runtime_error;
@@ -31,11 +32,12 @@ protected:
     static int *new_socket;
     static int *socketfd;
     static int sockfds_open;
+    static sem_t *connSem;
     static thread *openThreads[3];
 
 public:
     SignalHandling();
-    SignalHandling(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, std::thread* firstThread, std::thread* secondThread, std::thread* thirdThread);
+    SignalHandling(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, std::thread* firstThread, std::thread* secondThread, std::thread* thirdThread, sem_t* connSema);
     ~SignalHandling();
 
     static bool gotExitSignal();
