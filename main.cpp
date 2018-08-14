@@ -156,8 +156,6 @@ void stopdaemon(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, th
     firstThread->join();
     secondThread->join();
     thirdThread->join();
-    sem_destroy(disconnSem);
-    sem_destroy(connSem);
     syslog(LOG_NOTICE,"SHUTDOWN DONE");
 }
 
@@ -308,7 +306,7 @@ void do_heartbeat() {
             int i = 1;
             sem_wait(&disconnectSem);
             sem_wait(&disconnectSem);
-            while (conndead) {
+            while (conndead && !endMyLife) {
                 //when connection to client died, establish connection again with next client
                 sleep(1);
                 new_socket = accept(socketfd[1], (struct sockaddr *) &server, (socklen_t *) &addrlen);
@@ -317,14 +315,21 @@ void do_heartbeat() {
                 conndead = false;
                 ClientAliveConfirmed = true;
                 mutConnDead.unlock();
+                if (new_socket > 0)
+                {
+                    sem_post(&connectSem);
+                    sem_post(&connectSem);
+                }
             }
-            sem_post(&connectSem);
-            sem_post(&connectSem);
         } while (endMyLife == false);
         endMyLife = true;
+        sem_post(&connectSem);
+        sem_post(&connectSem);
         if (!theHandler.gotExitSignal()) {
             stopdaemon(socketfd, 2, &new_socket, &endMyLife, &udplocal, &tcpglobal, &tcpreadglobal,&disconnectSem, &connectSem);
         }
+        sem_destroy(&disconnectSem);
+        sem_destroy(&connectSem);
     }
     catch (SignalException& e) {
         logmsg << "SignalException: " << e.what();
