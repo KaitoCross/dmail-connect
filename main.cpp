@@ -79,11 +79,11 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
     char buffer[10]="";
 
     do {
+        sem_wait(connSem);
         connDeadMutex->lock();
         connDeadtemp=*conndead;
         killProgram=*endMyLife;
         connDeadMutex->unlock();
-        sem_wait(connSem);
         while (!killProgram && !connDeadtemp) { //when everything is alright
             mutMailArr->lock();
             if (*mailsent) { //when filter was successful, tell the TCP client
@@ -138,7 +138,7 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
         killProgram=*endMyLife;
         connDeadMutex->unlock();
         sem_post(disconnSem);
-    }while (killProgram==false);
+    }while (!killProgram);
 }
 
 void stopdaemon(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, thread* firstThread, thread* secondThread, thread* thirdThread, sem_t* disconnSem, sem_t* connSem)
@@ -168,11 +168,11 @@ void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* ma
     int whaterror=1337;
     stringstream msg;
     do {
+        sem_wait(connSem);
         connDeadMutex->lock();
         connDeadTemp=*conndead;
         killProgram=*endMyLife;
         connDeadMutex->unlock();
-        sem_wait(connSem);
         while (!connDeadTemp && !killProgram) {
             int valread = (int) read(*new_socket, buffer, 10);
             if (valread == 0) {
@@ -323,6 +323,7 @@ void do_heartbeat() {
             }
         } while (endMyLife == false);
         endMyLife = true;
+
         sem_post(&connectSem);
         sem_post(&connectSem);
         if (!theHandler.gotExitSignal()) {
