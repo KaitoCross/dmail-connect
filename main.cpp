@@ -34,7 +34,6 @@ void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mai
     /*Listens to requests from dmail-filter locally)*/
     *sockfd = socket(AF_INET,SOCK_DGRAM,0);
     struct sockaddr_in serv, client;
-    int olength=sizeof(client);
     serv.sin_family = AF_INET;
     serv.sin_port = htons(1337);
     serv.sin_addr.s_addr = inet_addr("127.0.0.1");
@@ -42,21 +41,21 @@ void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mai
     socklen_t m = sizeof(serv);
     char buffer[10] = "";
     bind(*sockfd, (struct sockaddr*)&serv, sizeof(serv));
-    char *ptr;
-    while(*endMyLife == false){
+
+    while(!endMyLife){
         recvfrom(*sockfd,buffer,10,0,(struct sockaddr *)&client,&l);
         /* Parsing incoming messages*/
         if (strncmp(buffer, "REQTO", 5) == 0) {
             //Time request received: Send out offset to filter program
-            syslog(LOG_NOTICE,"RECEIVED TIME REQUEST\n");
+            syslog(LOG_NOTICE,"%s","RECEIVED TIME REQUEST\n");
             mTimeshift->lock();
             sprintf(buffer, "RCVTO %04d", *timeshift);
             mTimeshift->unlock();
-            int sent = (int)sendto(*sockfd, buffer, 10, 0, (struct sockaddr *) &client, m);
+            sendto(*sockfd, buffer, 10, 0, (struct sockaddr *) &client, m);
         }
         if (strncmp(buffer, "MAILD", 5) == 0) {
             //Mail processed by filter, information is important for the SIP-Pi client! will be relayed later!
-            syslog(LOG_NOTICE, "MAIL PROCESSED\n");
+            syslog(LOG_NOTICE,"%s", "MAIL PROCESSED\n");
             mutMailArr->lock();
             *mailsent=true;
             mutMailArr->unlock();
@@ -65,7 +64,7 @@ void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mai
     }
 }
 
-void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool* mailsent,bool* repliedToKeepalive, bool* conndead, mutex* mTimeshift, mutex* mutMailArr, mutex* connDeadMutex, sem_t* disconnSem, sem_t* connSem)
+void tcp_writes_globally(int *new_socket, bool *endMyLife, bool* mailsent,bool* repliedToKeepalive, bool* conndead, mutex* mutMailArr, mutex* connDeadMutex, sem_t* disconnSem, sem_t* connSem)
 {
     typedef chrono::high_resolution_clock timerexact; //used for keepalive check
     auto t2 = timerexact::now(); //used for keepalive check
@@ -75,8 +74,6 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
     int errorcode=1337;
     int timeouts = 0;
     stringstream logmsg;
-    /**bool conndead = false;*/
-    char buffer[10]="";
 
     do {
         sem_wait(connSem);
@@ -102,7 +99,7 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
                     timeouts++;
                     if(timeouts>3) {
                         *conndead = true;
-                        syslog(LOG_NOTICE, "CONNECTION LOST - NO REPLY\n");
+                        syslog(LOG_NOTICE,"%s", "CONNECTION LOST - NO REPLY\n");
                         timeouts = 0;
                     }
                 } else {
@@ -115,7 +112,7 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
                     errorcode=errno;
                     perror("send");
                     logmsg << " BYTES SENT "<<tempo<<"\n TIMEOUT CHECK ERRNO "<< errorcode << "\n" << strerror(errorcode) <<" " << stderr <<"\n";
-                    syslog(LOG_ERR,logmsg.str().c_str());
+                    syslog(LOG_ERR,"%s",logmsg.str().c_str());
                     logmsg.clear();
                     logmsg.str("");
                     if (errorcode >= 100) //error handling
@@ -125,7 +122,7 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
                         connDeadMutex->lock();
                         *conndead = true;
                         connDeadMutex->unlock();
-                        syslog(LOG_ERR,"CONNECTION LOST\n");
+                        syslog(LOG_ERR,"%s","CONNECTION LOST\n");
                     }
                 }
                 t2=timerexact::now();
@@ -141,7 +138,7 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
     }while (!killProgram);
 }
 
-void stopdaemon(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, thread* firstThread, thread* secondThread, thread* thirdThread, sem_t* disconnSem, sem_t* connSem)
+void stopdaemon(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, thread* firstThread, thread* secondThread, thread* thirdThread)
 {
     shutdown(*connfd,SHUT_RDWR);
     for (int i = 0; i < sockfdamount; i++) {
@@ -156,10 +153,10 @@ void stopdaemon(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, th
     firstThread->join();
     secondThread->join();
     thirdThread->join();
-    syslog(LOG_NOTICE,"SHUTDOWN DONE");
+    syslog(LOG_NOTICE,"%s","SHUTDOWN DONE");
 }
 
-void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* mailsent, bool* repliedToKeepalive, bool* conndead, mutex* mTimeshift, mutex* mutMailArr, mutex* connDeadMutex, sem_t* disconnSem, sem_t* connSem)
+void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* repliedToKeepalive, bool* conndead, mutex* mTimeshift, mutex* connDeadMutex, sem_t* disconnSem, sem_t* connSem)
 {
     bool connDeadTemp = false;
     bool killProgram=false;
@@ -179,7 +176,7 @@ void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* ma
                 connDeadMutex->lock();
                 *conndead = true;
                 connDeadMutex->unlock();
-                syslog(LOG_NOTICE,"CONNECTION LOST 0 PACKET\n");
+                syslog(LOG_NOTICE,"%s","CONNECTION LOST 0 PACKET\n");
                 shutdown(*new_socket,SHUT_RDWR);
                 close(*new_socket);
             }
@@ -187,7 +184,7 @@ void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* ma
                 char *endOfBuffer = &buffer[10];    //Write new offset into memory later
                 mTimeshift->lock();
                 *timeshift = (int) strtol(buffer + 6, &endOfBuffer, 10);
-                syslog(LOG_NOTICE,"RECEIVED NEW TIME\n");
+                syslog(LOG_NOTICE,"%s","RECEIVED NEW TIME\n");
                 mTimeshift->unlock();
                 sprintf(buffer2,"RCVOK");
                 int rcvok = (int)send(*new_socket, buffer2, strlen(buffer2), 0); //send RCVOK (signalling everything is ok)
@@ -199,19 +196,19 @@ void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* ma
                     whaterror = errno;
                     //cout << stderr << "STDERR\n";
                     msg << "RECEIVE NOT OK ERRNO " << whaterror << "\n";
-                    syslog(LOG_ERR,msg.str().c_str());
+                    syslog(LOG_ERR,"%s",msg.str().c_str());
                     msg.clear();
                     msg.str("");
                 }
             }
             if (strncmp(buffer, "SHTDW", 5) == 0) { //secret shutdown command for this program
-                int bytes_sent = (int)send(*new_socket, "SDOWN", strlen("SDOWN"), 0);
+                send(*new_socket, "SDOWN", strlen("SDOWN"), 0);
                 connDeadMutex->lock();
                 *endMyLife = true;
                 connDeadMutex->unlock();
             }
             if (strncmp(buffer, "ELPSY", strlen("ELPSY")) == 0) {
-                int bytes_wtf = (int)send(*new_socket, "KONGROO", strlen("KONGROO"), 0); //Reply to keepalive packet
+                send(*new_socket, "KONGROO", strlen("KONGROO"), 0); //Reply to keepalive packet
             }
             if (strncmp(buffer, "KONGROO", strlen("KONGROO")) == 0) {
                 connDeadMutex->lock();
@@ -247,10 +244,10 @@ void do_heartbeat() {
     sem_t connectSem;
     sem_init(&connectSem,0,0);
     thread udplocal(udp_listens_locally, &socketfd[0], &setbackHours, &endMyLife, &mailed, &mutSetbackHours, &mArrive);
-    thread tcpglobal(tcp_writes_globally, &new_socket, &setbackHours, &endMyLife, &mailed, &ClientAliveConfirmed,
-                     &conndead, &mutSetbackHours, &mArrive, &mutConnDead, &disconnectSem, &connectSem);
-    thread tcpreadglobal(tcp_reads_global, &new_socket, &setbackHours, &endMyLife, &mailed, &ClientAliveConfirmed,
-                         &conndead, &mutSetbackHours, &mArrive, &mutConnDead,&disconnectSem, &connectSem);
+    thread tcpglobal(tcp_writes_globally, &new_socket, &endMyLife, &mailed, &ClientAliveConfirmed,
+                     &conndead, &mArrive, &mutConnDead, &disconnectSem, &connectSem);
+    thread tcpreadglobal(tcp_reads_global, &new_socket, &setbackHours, &endMyLife, &ClientAliveConfirmed,
+                         &conndead, &mutSetbackHours, &mutConnDead,&disconnectSem, &connectSem);
     stringstream logmsg;
     struct sockaddr_in6 server;
     socketfd[1] = socket(AF_INET6, SOCK_STREAM, 0);
@@ -260,20 +257,18 @@ void do_heartbeat() {
     setsockopt(socketfd[1], IPPROTO_IPV6, IPV6_V6ONLY, 0, sizeof(int));
 
     if (socketfd[1] < 0) {
-        syslog(LOG_ERR,"CANT CREATE SOCKET!\n");
+        syslog(LOG_ERR,"%s","CANT CREATE SOCKET!\n");
         return;
     }
     unsigned int addrlen = sizeof(server);
-    /**bool conndead = false;*/
-    char buffer[10] = "";
     server.sin6_family = AF_INET6;
     server.sin6_addr = in6addr_any;
     server.sin6_port = htons(4242);
-    syslog(LOG_NOTICE,"ABOUT TO BIND TCP\n");
+    syslog(LOG_NOTICE,"%s","ABOUT TO BIND TCP\n");
     int bindsuc = (int) bind(socketfd[1], (struct sockaddr *) &server, addrlen);
     if (bindsuc < 0) {
         logmsg << "ERROR BINDING " << bindsuc << "\n";
-        syslog(LOG_ERR,logmsg.str().c_str());
+        syslog(LOG_ERR,"%s",logmsg.str().c_str());
         logmsg.clear();
         logmsg.str("");
         int errcode = errno;
@@ -282,35 +277,33 @@ void do_heartbeat() {
         endMyLife = true;
         mutConnDead.unlock();
         logmsg << errcode << "\n";
-        syslog(LOG_ERR, logmsg.str().c_str());
+        syslog(LOG_ERR,"%s", logmsg.str().c_str());
         logmsg.clear();
         logmsg.str("");
         return;
     } else {
-        syslog(LOG_NOTICE, "BOUND TCP\n");
+        syslog(LOG_NOTICE,"%s", "BOUND TCP\n");
     }
     int listensuc = listen(socketfd[1], 1);
     if (listensuc) {
         logmsg << "ERROR LISTENING " << listensuc << "\n";
-        syslog(LOG_ERR, logmsg.str().c_str());
+        syslog(LOG_ERR,"%s", logmsg.str().c_str());
         logmsg.str("");
         logmsg.clear();
         return;
     } else {
-        syslog(LOG_NOTICE,"LISTENING TCP\n");
+        syslog(LOG_NOTICE,"%s","LISTENING TCP\n");
     }
     try {
         SignalHandling theHandler(socketfd, 2, &new_socket, &endMyLife, &udplocal, &tcpglobal, &tcpreadglobal);
         theHandler.setupSignalHandlers();
         do {
-            int i = 1;
             sem_wait(&disconnectSem);
             sem_wait(&disconnectSem);
             while (conndead && !endMyLife) {
                 //when connection to client died, establish connection again with next client
-                sleep(1);
                 new_socket = accept(socketfd[1], (struct sockaddr *) &server, (socklen_t *) &addrlen);
-                syslog(LOG_NOTICE,"CONNECTION ESTABLISHED!\n");
+                syslog(LOG_NOTICE,"%s","CONNECTION ESTABLISHED!\n");
                 mutConnDead.lock();
                 conndead = false;
                 ClientAliveConfirmed = true;
@@ -321,20 +314,20 @@ void do_heartbeat() {
                     sem_post(&connectSem);
                 }
             }
-        } while (endMyLife == false);
+        } while (!endMyLife);
         endMyLife = true;
 
         sem_post(&connectSem);
         sem_post(&connectSem);
         if (!theHandler.gotExitSignal()) {
-            stopdaemon(socketfd, 2, &new_socket, &endMyLife, &udplocal, &tcpglobal, &tcpreadglobal,&disconnectSem, &connectSem);
+            stopdaemon(socketfd, 2, &new_socket, &endMyLife, &udplocal, &tcpglobal, &tcpreadglobal);
         }
         sem_destroy(&disconnectSem);
         sem_destroy(&connectSem);
     }
     catch (SignalException& e) {
         logmsg << "SignalException: " << e.what();
-        syslog(LOG_ERR,logmsg.str().c_str());
+        syslog(LOG_ERR,"%s",logmsg.str().c_str());
         logmsg.str("");
         logmsg.clear();
     }
@@ -365,7 +358,7 @@ int main(void)
 
     // Open system logs for the child process
     openlog("dmail-connect", LOG_NOWAIT | LOG_PID, LOG_USER);
-    syslog(LOG_NOTICE, "Successfully started dmail-connect");
+    syslog(LOG_NOTICE,"%s", "Successfully started dmail-connect");
 
     // Generate a session ID for the child process
     sid = setsid();
@@ -373,7 +366,7 @@ int main(void)
     if(sid < 0)
     {
         // Log failure and exit
-        syslog(LOG_ERR, "Could not generate session ID for child process");
+        syslog(LOG_ERR,"%s", "Could not generate session ID for child process");
 
         // If a new session ID could not be generated, we must terminate the child process
         // or it will be orphaned
@@ -384,7 +377,7 @@ int main(void)
     if((chdir("/")) < 0)
     {
         // Log failure and exit
-        syslog(LOG_ERR, "Could not change working directory to /");
+        syslog(LOG_ERR,"%s", "Could not change working directory to /");
 
         // If our guaranteed directory does not exist, terminate the child process to ensure
         // the daemon has not been hijacked
@@ -396,13 +389,11 @@ int main(void)
     close(STDOUT_FILENO);
     close(STDERR_FILENO);
 
-    // Daemon-specific intialization should go here
-    const int SLEEP_INTERVAL = 5;
     //execute daemon heartbeat - infinite loop in function
     do_heartbeat();
 
     // Close system logs for the child process
-    syslog(LOG_NOTICE, "Stopping dmail-connect");
+    syslog(LOG_NOTICE,"%s", "Stopping dmail-connect");
     closelog();
 
     // Terminate the child process when the daemon completes
