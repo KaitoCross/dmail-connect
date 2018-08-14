@@ -23,6 +23,7 @@
 #include <err.h>
 #include <cerrno>
 #include "SignalHandling.h"
+#include <semaphore.h>
 
 #define BUFLEN 10
 
@@ -64,7 +65,7 @@ void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mai
     }
 }
 
-void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool* mailsent,bool* repliedToKeepalive, bool* conndead, mutex* mTimeshift, mutex* mutMailArr, mutex* connDeadMutex)
+void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool* mailsent,bool* repliedToKeepalive, bool* conndead, mutex* mTimeshift, mutex* mutMailArr, mutex* connDeadMutex, sem_t* disconnSem, sem_t* connSem)
 {
     typedef chrono::high_resolution_clock timerexact; //used for keepalive check
     auto t2 = timerexact::now(); //used for keepalive check
@@ -82,6 +83,7 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
         connDeadtemp=*conndead;
         killProgram=*endMyLife;
         connDeadMutex->unlock();
+        sem_wait(connSem);
         while (!killProgram && !connDeadtemp) { //when everything is alright
             mutMailArr->lock();
             if (*mailsent) { //when filter was successful, tell the TCP client
@@ -135,11 +137,11 @@ void tcp_writes_globally(int *new_socket, int* timeshift, bool *endMyLife, bool*
         connDeadMutex->lock();
         killProgram=*endMyLife;
         connDeadMutex->unlock();
-        sleep(1);
+        sem_post(disconnSem);
     }while (killProgram==false);
 }
 
-void stopdaemon(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, thread* firstThread, thread* secondThread, thread* thirdThread)
+void stopdaemon(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, thread* firstThread, thread* secondThread, thread* thirdThread, sem_t* disconnSem, sem_t* connSem)
 {
     shutdown(*connfd,SHUT_RDWR);
     for (int i = 0; i < sockfdamount; i++) {
@@ -154,10 +156,12 @@ void stopdaemon(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, th
     firstThread->join();
     secondThread->join();
     thirdThread->join();
+    sem_destroy(disconnSem);
+    sem_destroy(connSem);
     syslog(LOG_NOTICE,"SHUTDOWN DONE");
 }
 
-void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* mailsent, bool* repliedToKeepalive, bool* conndead, mutex* mTimeshift, mutex* mutMailArr, mutex* connDeadMutex)
+void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* mailsent, bool* repliedToKeepalive, bool* conndead, mutex* mTimeshift, mutex* mutMailArr, mutex* connDeadMutex, sem_t* disconnSem, sem_t* connSem)
 {
     bool connDeadTemp = false;
     bool killProgram=false;
@@ -170,6 +174,7 @@ void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* ma
         connDeadTemp=*conndead;
         killProgram=*endMyLife;
         connDeadMutex->unlock();
+        sem_wait(connSem);
         while (!connDeadTemp && !killProgram) {
             int valread = (int) read(*new_socket, buffer, 10);
             if (valread == 0) {
@@ -223,7 +228,7 @@ void tcp_reads_global(int *new_socket, int* timeshift, bool *endMyLife, bool* ma
         connDeadMutex->lock();
         killProgram=*endMyLife;
         connDeadMutex->unlock();
-        sleep(1);
+        sem_post(disconnSem);
     } while (!killProgram);
 }
 
@@ -239,11 +244,15 @@ void do_heartbeat() {
     mutex mArrive;
     mutex mutSetbackHours;
     mutex mutConnDead;
+    sem_t disconnectSem;
+    sem_init(&disconnectSem,0,2);
+    sem_t connectSem;
+    sem_init(&connectSem,0,0);
     thread udplocal(udp_listens_locally, &socketfd[0], &setbackHours, &endMyLife, &mailed, &mutSetbackHours, &mArrive);
     thread tcpglobal(tcp_writes_globally, &new_socket, &setbackHours, &endMyLife, &mailed, &ClientAliveConfirmed,
-                     &conndead, &mutSetbackHours, &mArrive, &mutConnDead);
+                     &conndead, &mutSetbackHours, &mArrive, &mutConnDead, &disconnectSem, &connectSem);
     thread tcpreadglobal(tcp_reads_global, &new_socket, &setbackHours, &endMyLife, &mailed, &ClientAliveConfirmed,
-                         &conndead, &mutSetbackHours, &mArrive, &mutConnDead);
+                         &conndead, &mutSetbackHours, &mArrive, &mutConnDead,&disconnectSem, &connectSem);
     stringstream logmsg;
     struct sockaddr_in6 server;
     socketfd[1] = socket(AF_INET6, SOCK_STREAM, 0);
@@ -297,7 +306,8 @@ void do_heartbeat() {
         theHandler.setupSignalHandlers();
         do {
             int i = 1;
-            //mutConnDead.lock();
+            sem_wait(&disconnectSem);
+            sem_wait(&disconnectSem);
             while (conndead) {
                 //when connection to client died, establish connection again with next client
                 sleep(1);
@@ -308,11 +318,12 @@ void do_heartbeat() {
                 ClientAliveConfirmed = true;
                 mutConnDead.unlock();
             }
-            //mutConnDead.unlock();
+            sem_post(&connectSem);
+            sem_post(&connectSem);
         } while (endMyLife == false);
         endMyLife = true;
         if (!theHandler.gotExitSignal()) {
-            stopdaemon(socketfd, 2, &new_socket, &endMyLife, &udplocal, &tcpglobal, &tcpreadglobal);
+            stopdaemon(socketfd, 2, &new_socket, &endMyLife, &udplocal, &tcpglobal, &tcpreadglobal,&disconnectSem, &connectSem);
         }
     }
     catch (SignalException& e) {
