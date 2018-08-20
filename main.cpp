@@ -41,8 +41,7 @@ void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mai
     socklen_t m = sizeof(serv);
     char buffer[10] = "";
     bind(*sockfd, (struct sockaddr*)&serv, sizeof(serv));
-
-    while(!endMyLife){
+    while(!*endMyLife){
         recvfrom(*sockfd,buffer,10,0,(struct sockaddr *)&client,&l);
         /* Parsing incoming messages*/
         if (strncmp(buffer, "REQTO", 5) == 0) {
