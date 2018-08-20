@@ -274,7 +274,7 @@ void do_heartbeat() {
     sem_init(&connectSem,0,0);
     long long int timeout_status = 0;
     thread timingTimeout(timeoutcheck, &endMyLife,&conndead,&ClientAliveConfirmed,&mutConnDead,&sendsmthSem,&timeout_status,&timerValProt);
-    thread udplocal(udp_listens_locally, &socketfd[0], &setbackHours, &endMyLife, &mailed, &mutSetbackHours, &mArrive);
+    thread udplocal(udp_listens_locally, &socketfd[0], &setbackHours, &endMyLife, &mailed, &mutSetbackHours, &mArrive, &sendsmthSem);
     thread tcpglobal(tcp_writes_globally, &new_socket, &endMyLife, &mailed, &ClientAliveConfirmed,
                      &conndead, &mArrive, &mutConnDead, &disconnectSem, &connectSem, &sendsmthSem,&timeout_status,&timerValProt);
     thread tcpreadglobal(tcp_reads_global, &new_socket, &setbackHours, &endMyLife, &ClientAliveConfirmed,
