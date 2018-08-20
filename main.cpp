@@ -29,7 +29,7 @@
 
 using namespace std;
 
-void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mailsent, mutex* mTimeshift, mutex* mutMailArr)
+void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mailsent, mutex* mTimeshift, mutex* mutMailArr,sem_t *sendSomething)
 {
     /*Listens to requests from dmail-filter locally)*/
     *sockfd = socket(AF_INET,SOCK_DGRAM,0);
@@ -59,20 +59,60 @@ void udp_listens_locally(int *sockfd, int* timeshift, bool* endMyLife, bool* mai
             mutMailArr->lock();
             *mailsent=true;
             mutMailArr->unlock();
+            sem_post(sendSomething);
             strcpy(buffer,"REKKT");
         }
     }
 }
 
-void tcp_writes_globally(int *new_socket, bool *endMyLife, bool* mailsent,bool* repliedToKeepalive, bool* conndead, mutex* mutMailArr, mutex* connDeadMutex, sem_t* disconnSem, sem_t* connSem)
+void timeoutcheck(bool *endMyLife, bool* conndead, bool* repliedToKeepalive, mutex* connDeadMutex, sem_t* producedSendSig, long long int* sec_passed, mutex* secPassedMut)
 {
     typedef chrono::high_resolution_clock timerexact; //used for keepalive check
+    connDeadMutex->lock();
+    bool killProgram=*endMyLife;
+    connDeadMutex->unlock();
+    int timeouts = 0;
+    secPassedMut->lock();
+    *sec_passed=0;
+    auto seconds_passed = *sec_passed;
+    secPassedMut->unlock();
     auto t2 = timerexact::now(); //used for keepalive check
     auto t1 = timerexact::now(); //used for keepalive check
+    while (!killProgram) {
+        t1 = timerexact::now(); //used for keepalive check
+        seconds_passed = chrono::duration_cast<std::chrono::seconds>(t1 - t2).count();
+        secPassedMut->lock();
+        *sec_passed = seconds_passed;
+        secPassedMut->unlock();
+        if (seconds_passed >= 5) {
+            connDeadMutex->lock();
+            if (!*repliedToKeepalive) //reply will be detected by tcp reader thread
+            {
+                timeouts++;
+                if (timeouts > 3) {
+                    *conndead = true;
+                    syslog(LOG_NOTICE, "%s", "CONNECTION LOST - NO REPLY\n");
+                    timeouts = 0;
+                }
+            } else {
+                *repliedToKeepalive = false;
+                sem_post(producedSendSig);
+            }
+            connDeadMutex->lock();
+            killProgram=*endMyLife;
+            connDeadMutex->unlock();
+            t2=timerexact::now();
+        }
+        sleep(1);
+    }
+}
+
+void tcp_writes_globally(int *new_socket, bool *endMyLife, bool* mailsent, bool* repliedToKeepalive, bool* conndead, mutex* mutMailArr, mutex* connDeadMutex, sem_t* disconnSem, sem_t* connSem, sem_t* producedSendSig, long long int *secsPassed, mutex* secPassedMut)
+{
     bool connDeadtemp=true; //connection dead?
     bool killProgram=false; //to end the loop when program needs to quit
     int errorcode=1337;
-    int timeouts = 0;
+    long long int seconds_passed=0;
     stringstream logmsg;
 
     do {
@@ -82,30 +122,18 @@ void tcp_writes_globally(int *new_socket, bool *endMyLife, bool* mailsent,bool* 
         killProgram=*endMyLife;
         connDeadMutex->unlock();
         while (!killProgram && !connDeadtemp) { //when everything is alright
+            sem_wait(producedSendSig);
             mutMailArr->lock();
             if (*mailsent) { //when filter was successful, tell the TCP client
                 send(*new_socket, "MAILD", strlen("MAILD"), 0);
                 *mailsent = false;
             }
             mutMailArr->unlock();
-            //check for timeout - custom keepalive packet after 5 secs
-            t1 = timerexact::now();
-            long seconds_passed = chrono::duration_cast<std::chrono::seconds>(t1-t2).count();
+            secPassedMut->lock();
+            seconds_passed=*secsPassed;
+            secPassedMut->unlock();
             if (seconds_passed >= 5)
             {
-                connDeadMutex->lock();
-                if (!*repliedToKeepalive) //reply will be detected by tcp reader thread
-                {
-                    timeouts++;
-                    if(timeouts>3) {
-                        *conndead = true;
-                        syslog(LOG_NOTICE,"%s", "CONNECTION LOST - NO REPLY\n");
-                        timeouts = 0;
-                    }
-                } else {
-                    *repliedToKeepalive = false;
-                }
-                connDeadMutex->unlock();
                 int tempo=(int)send(*new_socket, "ELPSY", strlen("ELPSY"),0); //sending keepalive packet
                 if (tempo<1)
                 {
@@ -125,7 +153,6 @@ void tcp_writes_globally(int *new_socket, bool *endMyLife, bool* mailsent,bool* 
                         syslog(LOG_ERR,"%s","CONNECTION LOST\n");
                     }
                 }
-                t2=timerexact::now();
             }
             connDeadtemp=*conndead;
             killProgram=*endMyLife;
@@ -239,13 +266,18 @@ void do_heartbeat() {
     mutex mArrive;
     mutex mutSetbackHours;
     mutex mutConnDead;
+    mutex timerValProt;
     sem_t disconnectSem;
     sem_init(&disconnectSem,0,2);
     sem_t connectSem;
     sem_init(&connectSem,0,0);
+    sem_t sendsmthSem;
+    sem_init(&connectSem,0,0);
+    long long int timeout_status = 0;
+    thread timingTimeout(timeoutcheck, &endMyLife,&conndead,&ClientAliveConfirmed,&mutConnDead,&sendsmthSem,&timeout_status,&timerValProt);
     thread udplocal(udp_listens_locally, &socketfd[0], &setbackHours, &endMyLife, &mailed, &mutSetbackHours, &mArrive);
     thread tcpglobal(tcp_writes_globally, &new_socket, &endMyLife, &mailed, &ClientAliveConfirmed,
-                     &conndead, &mArrive, &mutConnDead, &disconnectSem, &connectSem);
+                     &conndead, &mArrive, &mutConnDead, &disconnectSem, &connectSem, &sendsmthSem,&timeout_status,&timerValProt);
     thread tcpreadglobal(tcp_reads_global, &new_socket, &setbackHours, &endMyLife, &ClientAliveConfirmed,
                          &conndead, &mutSetbackHours, &mutConnDead,&disconnectSem, &connectSem);
     stringstream logmsg;
