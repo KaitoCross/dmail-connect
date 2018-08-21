@@ -25,8 +25,9 @@ bool *SignalHandling::conndead = NULL;
 int *SignalHandling::new_socket = NULL;
 int *SignalHandling::socketfd = NULL;
 sem_t *SignalHandling::connSem = NULL;
+sem_t *SignalHandling::sendsmthSem = NULL;
 int SignalHandling::sockfds_open = 0;
-thread *SignalHandling::openThreads[3];
+thread *SignalHandling::openThreads[4];
 
 /**
 * Default Contructor.
@@ -76,11 +77,14 @@ void SignalHandling::exitSignalHandler(int _ignored)
         close(socketfd[i]);
     }
     *endMyLife = true;
+    sem_post(sendsmthSem);
+    sem_post(connSem);
     sem_post(connSem);
     sem_post(connSem);
     openThreads[0]->join();
     openThreads[1]->join();
     openThreads[2]->join();
+    openThreads[3]->join();
 }
 
 void SignalHandling::setupSignalHandlers()
@@ -103,7 +107,7 @@ void SignalHandling::setupSignalHandlers()
     }
 }
 
-SignalHandling::SignalHandling(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, std::thread* firstThread, std::thread* secondThread, std::thread* thirdThread, sem_t *connSema)
+SignalHandling::SignalHandling(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, std::thread* firstThread, std::thread* secondThread, std::thread* thirdThread, std::thread* fourthThread, sem_t *connSema, sem_t* sendSigSem)
 {
     sockfds_open=sockfdamount;
     socketfd = sockfd;
@@ -112,5 +116,7 @@ SignalHandling::SignalHandling(int sockfd[], int sockfdamount, int *connfd, bool
     openThreads[0] = firstThread;
     openThreads[1] = secondThread;
     openThreads[2] = thirdThread;
+    openThreads[3] = fourthThread;
     connSem = connSema;
+    sendsmthSem = sendSigSem;
 }

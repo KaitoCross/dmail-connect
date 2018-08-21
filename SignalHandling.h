@@ -32,12 +32,12 @@ protected:
     static int *new_socket;
     static int *socketfd;
     static int sockfds_open;
-    static sem_t *connSem;
-    static thread *openThreads[3];
+    static sem_t *connSem, *sendsmthSem;
+    static thread *openThreads[4];
 
 public:
     SignalHandling();
-    SignalHandling(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, std::thread* firstThread, std::thread* secondThread, std::thread* thirdThread, sem_t* connSema);
+    SignalHandling(int sockfd[], int sockfdamount, int *connfd, bool* endMyLife, std::thread* firstThread, std::thread* secondThread, std::thread* thirdThread, std::thread* fourthThread, sem_t* connSema, sem_t* sendSigSem);
     ~SignalHandling();
 
     static bool gotExitSignal();
