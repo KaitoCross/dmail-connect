@@ -390,7 +390,7 @@ void do_heartbeat() {
 int main(void)
 {
     // Define variables
-    /*pid_t pid, sid;
+    pid_t pid, sid;
 
     // Fork the current process
     pid = fork();
@@ -407,7 +407,7 @@ int main(void)
 
     // The parent process has now terminated, and the forked child process will continue
     // (the pid of the child process was 0)
-*/
+
     // Since the child process is a daemon, the umask needs to be set so files and logs can be written
     umask(0);
 
@@ -416,7 +416,7 @@ int main(void)
     syslog(LOG_NOTICE,"%s", "Successfully started dmail-connect");
 
     // Generate a session ID for the child process
-    /*sid = setsid();
+    sid = setsid();
     // Ensure a valid SID for the child process
     if(sid < 0)
     {
@@ -426,7 +426,7 @@ int main(void)
         // If a new session ID could not be generated, we must terminate the child process
         // or it will be orphaned
         exit(EXIT_FAILURE);
-    }*/
+    }
 
     // Change the current working directory to a directory guaranteed to exist
     if((chdir("/")) < 0)
